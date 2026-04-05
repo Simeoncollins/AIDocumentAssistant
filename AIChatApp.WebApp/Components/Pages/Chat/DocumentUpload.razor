@@ -1,0 +1,186 @@
+@using Microsoft.AspNetCore.Components.Forms
+@using AIChatApp.WebApp.Services
+@using AIChatApp.WebApp.Services.Ingestion
+@using Microsoft.Extensions.VectorData
+@inject UserSessionContext UserSession
+@inject DataIngestor DataIngestor
+@inject SemanticSearch Search
+@inject IWebHostEnvironment Env
+@inject VectorStore VectorStore
+
+<div class="document-upload">
+    <div class="upload-controls" style="position: relative; width: 100%;">
+        <InputFile OnChange="HandleFileSelected" multiple accept=".txt,.pdf,.md,.docx" title="Drag and drop or click to upload" class="file-input"
+                   @ondragenter="() => isDragHover = true" 
+                   @ondragleave="() => isDragHover = false" />
+        <div class="upload-btn @(isDragHover ? "drag-hover" : "")" style="@(isDragHover ? "background: #60a5fa;" : "")">
+            <svg fill="currentColor" viewBox="0 0 24 24" width="20" height="20">
+                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"/>
+            </svg>
+            @(isDragHover ? "Drop here!" : "Upload or Drop Docs")
+        </div>
+    </div>
+
+    @if (isUploading)
+    {
+        <div class="progress-container" style="width: 100%; margin-top: 0.5rem;">
+            <div class="progress-bar" style="width: @(uploadProgress)%; height: 4px; background: #3b82f6; transition: width 0.2s;"></div>
+            <span class="upload-status" style="font-size: 0.8rem; margin-top: 0.25rem;">Uploading and indexing... @(uploadProgress)%</span>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(uploadMessage))
+    {
+        <span class="upload-status @(hasError ? "error" : "success")" style="font-size: 0.8rem; display: block; margin-top: 0.5rem;">@uploadMessage</span>
+    }
+
+    @if (existingFiles.Any())
+    {
+        <div class="file-list" style="margin-top: 0.5rem; font-size: 0.85rem;">
+            <strong style="color:var(--text-secondary)">Your Documents:</strong>
+            <ul style="list-style: none; padding: 0; margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                @foreach (var file in existingFiles)
+                {
+                    <li style="display:flex; align-items:center; gap: 0.25rem; background: var(--bg-accent, #1e293b); padding: 0.25rem 0.5rem; border-radius: 0.5rem; border: 1px solid var(--glass-border)">
+                        <span>@file</span>
+                        <button type="button" @onclick="() => DeleteFileAsync(file)" style="background: none; border: none; color: #ef4444; font-weight: bold; cursor: pointer; padding: 0 4px;">&times;</button>
+                    </li>
+                }
+            </ul>
+        </div>
+    }
+</div>
+
+@code {
+    private bool isDragHover = false;
+    private bool isUploading = false;
+    private bool hasError = false;
+    private string? uploadMessage;
+    private int uploadProgress = 0;
+    private List<string> existingFiles = new();
+    private DirectoryInfo? userDir;
+
+    protected override void OnInitialized()
+    {
+        userDir = new DirectoryInfo(Path.Combine(Env.WebRootPath, "Data", UserSession.SessionId));
+        LoadExistingFiles();
+    }
+
+    private void LoadExistingFiles()
+    {
+        if (userDir != null && userDir.Exists)
+        {
+            existingFiles = userDir.GetFiles().Select(f => f.Name).ToList();
+        }
+    }
+
+    private async Task HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        isDragHover = false;
+        isUploading = true;
+        hasError = false;
+        uploadMessage = null;
+        uploadProgress = 0;
+        StateHasChanged();
+
+        try
+        {
+            if (userDir != null && !userDir.Exists) userDir.Create();
+
+            long totalBytes = e.GetMultipleFiles().Sum(f => f.Size);
+            long uploadedBytes = 0;
+
+            foreach (var file in e.GetMultipleFiles())
+            {
+                var filePath = Path.Combine(userDir!.FullName, file.Name);
+                await using var stream = new FileStream(filePath, FileMode.Create);
+                await using var readStream = file.OpenReadStream(20 * 1024 * 1024); // 20MB limit
+                
+                var buffer = new byte[81920]; 
+                int bytesRead;
+                while ((bytesRead = await readStream.ReadAsync(buffer)) != 0)
+                {
+                    await stream.WriteAsync(buffer, 0, bytesRead);
+                    uploadedBytes += bytesRead;
+                    if (totalBytes > 0)
+                    {
+                        uploadProgress = (int)((uploadedBytes * 100) / totalBytes);
+                        StateHasChanged(); // safe to report here
+                    }
+                }
+            }
+
+            uploadProgress = 100;
+            StateHasChanged();
+            
+            if (userDir != null)
+                await DataIngestor.IngestDataAsync(userDir, "*.*", UserSession.SessionId);
+            
+            LoadExistingFiles();
+            uploadMessage = "Ready! You can now ask questions about your documents.";
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            uploadMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteFileAsync(string fileName)
+    {
+        if (userDir == null) return;
+        
+        var file = new FileInfo(Path.Combine(userDir.FullName, fileName));
+        if (file.Exists)
+        {
+            try 
+            {
+                file.Delete();
+                LoadExistingFiles();
+                isUploading = true; 
+                uploadProgress = 100;
+                uploadMessage = "Re-indexing...";
+                StateHasChanged();
+            
+                var collectionName = $"{IngestedChunk.CollectionName}_{UserSession.SessionId}";
+                var collection = VectorStore.GetCollection<string, IngestedChunk>(collectionName);
+                if (await collection.CollectionExistsAsync())
+                {
+                    try {
+                        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(AppContext.BaseDirectory, "vector-store.db")}");
+                        await connection.OpenAsync();
+                        var command = connection.CreateCommand();
+                        command.CommandText = $"DROP TABLE IF EXISTS \"{collectionName}\"";
+                        await command.ExecuteNonQueryAsync();
+                    } catch { 
+                        // Ignored
+                    }
+                }
+
+                if (existingFiles.Any())
+                {
+                    await DataIngestor.IngestDataAsync(userDir, "*.*", UserSession.SessionId);
+                    uploadMessage = "Document removed and remaining documents indexed.";
+                }
+                else 
+                {
+                    uploadMessage = "All user documents removed.";
+                }
+            } 
+            catch(Exception ex) 
+            {
+                hasError = true;
+                uploadMessage = $"Error: {ex.Message}";
+            }
+            finally 
+            {
+                isUploading = false;
+                StateHasChanged();
+            }
+        }
+    }
+}

@@ -1,0 +1,266 @@
+@page "/"
+@using System.ComponentModel
+@inject IChatClient ChatClient
+@inject NavigationManager Nav
+@inject SemanticSearch Search
+@inject UserSessionContext UserSession
+@inject ConversationRepository ConversationRepo
+@implements IDisposable
+
+<PageTitle>AI ChatApp</PageTitle>
+
+<div class="app-layout">
+    @if (isSidebarOpen)
+    {
+        <div class="sidebar-backdrop" @onclick="ToggleSidebar"></div>
+    }
+
+    <div class="sidebar @(isSidebarOpen ? "open" : "closed")">
+        <button type="button" class="new-chat-btn" @onclick="StartNewChat">
+            <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+            </svg>
+            New conversation
+        </button>
+        
+        <div class="sidebar-section">
+            <h4 class="section-title">Knowledge Base</h4>
+            <DocumentUpload />
+        </div>
+        
+        <div class="sidebar-section scrollable">
+            <h4 class="section-title">Conversations</h4>
+            <ul class="conversation-list">
+                @foreach (var conv in pastConversations)
+                {
+                    <li class="@(conv.Id == currentConversation.Id ? "active" : "")">
+                        <button type="button" @onclick="() => LoadConversation(conv)" class="conv-btn">@conv.Title</button>
+                        <button type="button" @onclick="() => DeleteConversationAsync(conv.Id)" class="del-btn" title="Delete">×</button>
+                    </li>
+                }
+            </ul>
+        </div>
+    </div>
+    
+    <div class="main-chat">
+        <div class="top-bar">
+            <button class="sidebar-toggle" @onclick="ToggleSidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+            </button>
+            <span class="chat-title">@currentConversation.Title</span>
+        </div>
+        
+        @if (messages.Count <= 1)
+        {
+            <div class="empty-state">
+                <h2>Welcome to AI ChatApp</h2>
+                <p>You need to upload a document to start chatting.</p>
+                <div class="empty-upload-wrapper">
+                    <DocumentUpload />
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="message-area scrollable">
+                <ChatMessageList Messages="@messages" InProgressMessage="@currentResponseMessage" />
+            </div>
+        }
+        
+        <div class="chat-container">
+            <div class="input-wrapper">
+                <ChatSuggestions OnSelected="@AddUserMessageAsync" @ref="@chatSuggestions" />
+                <ChatInput OnSend="@AddUserMessageAsync" @ref="@chatInput" />
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const string SystemPrompt = @"
+        You are an advanced AI assistant powered by a retrieval-augmented generation (RAG) system.
+        Your primary role is to answer user questions comprehensively using ONLY the information you retrieve from documents.
+        If the information is not present in the retrieved documents, state clearly that you do not know. Do not hallucinate external facts.
+
+        Use the LoadDocuments tool to prepare for searches before answering any questions.
+
+        Use the Search tool to find relevant information. You can use it multiple times if you need to gather context from different documents or refine your search.
+
+        CRITICAL: Whenever you use information from the search results, you MUST end your reply with citations in this exact format:
+        <citation filename='string'>exact quote here</citation>
+
+        Rules for citations:
+        1. The quote must be at most 5 words, taken word-for-word from the search result.
+        2. Never refer to the presence of citations inline (e.g., don't say 'According to the document'). 
+        3. Emit the citation tags exactly at the end of your complete response.
+        
+        Format your response beautifully using Markdown with clear headers, lists, and bold text for emphasis.
+        ";
+
+    private bool isSidebarOpen = true;
+    private ConversationRecord currentConversation = new();
+    private List<ConversationRecord> pastConversations = new();
+
+    private int statefulMessageCount;
+    private readonly ChatOptions chatOptions = new();
+    private readonly List<ChatMessage> messages = new();
+    private CancellationTokenSource? currentResponseCancellation;
+    private ChatMessage? currentResponseMessage;
+    private ChatInput? chatInput;
+    private ChatSuggestions? chatSuggestions;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSidebarAsync();
+
+        if (pastConversations.Any())
+        {
+            LoadConversation(pastConversations.First());
+        }
+        else
+        {
+            StartNewChat();
+        }
+
+        chatOptions.Tools = [
+            AIFunctionFactory.Create(LoadDocumentsAsync),
+            AIFunctionFactory.Create(SearchAsync)
+        ];
+    }
+
+    private async Task LoadSidebarAsync()
+    {
+        pastConversations = await ConversationRepo.GetConversationsBySessionIdAsync(UserSession.SessionId);
+    }
+
+    private void ToggleSidebar()
+    {
+        isSidebarOpen = !isSidebarOpen;
+    }
+
+    private void LoadConversation(ConversationRecord record)
+    {
+        CancelAnyCurrentResponse();
+        currentConversation = record;
+        messages.Clear();
+        messages.AddRange(record.Messages);
+        statefulMessageCount = messages.Count;
+        chatOptions.ConversationId = null; // resets ephemeral context
+        chatSuggestions?.Clear();
+        
+        if (Env.IsDevelopment() == false || true) 
+        {
+            // Close sidebar after selecting on mobile/flyout
+            isSidebarOpen = false;
+        }
+    }
+
+    private void StartNewChat()
+    {
+        CancelAnyCurrentResponse();
+        currentConversation = new ConversationRecord { SessionId = UserSession.SessionId };
+        messages.Clear();
+        messages.Add(new(ChatRole.System, SystemPrompt));
+        statefulMessageCount = 0;
+        chatOptions.ConversationId = null;
+        chatSuggestions?.Clear();
+    }
+
+    private async Task DeleteConversationAsync(string id)
+    {
+        await ConversationRepo.DeleteConversationAsync(id);
+        await LoadSidebarAsync();
+        if (currentConversation.Id == id)
+        {
+            if (pastConversations.Any()) LoadConversation(pastConversations.First());
+            else StartNewChat();
+        }
+    }
+
+    private async Task GenerateTitleAsync(string firstUserMessage)
+    {
+        try 
+        {
+            var titleClientOptions = new ChatOptions { MaxOutputTokens = 15 };
+            var sysMsg = new ChatMessage(ChatRole.System, "Generate a very short 3-5 word title for a conversation starting with the following user message. Output ONLY the title, no quotes or prefix.");
+            var usrMsg = new ChatMessage(ChatRole.User, firstUserMessage);
+            var titleResultStr = "";
+            await foreach (var update in ChatClient.GetStreamingResponseAsync(new[] { sysMsg, usrMsg }, titleClientOptions))
+            {
+                titleResultStr += update.Text;
+            }
+            var title = titleResultStr.Trim('"', '\'', ' ', '*');
+            currentConversation.Title = title;
+        }
+        catch { } 
+    }
+
+    private async Task AddUserMessageAsync(ChatMessage userMessage)
+    {
+        CancelAnyCurrentResponse();
+
+        messages.Add(userMessage);
+        chatSuggestions?.Clear();
+        
+        if (chatInput != null) await chatInput.FocusAsync();
+
+        if (currentConversation.Title == "New Conversation" && messages.Count(m => m.Role == ChatRole.User) == 1)
+        {
+            await GenerateTitleAsync(userMessage.Text ?? "");
+        }
+
+        var responseText = new TextContent("");
+        currentResponseMessage = new ChatMessage(ChatRole.Assistant, [responseText]);
+        currentResponseCancellation = new();
+        
+        await foreach (var update in ChatClient.GetStreamingResponseAsync(messages.Skip(statefulMessageCount), chatOptions, currentResponseCancellation.Token))
+        {
+            messages.AddMessages(update, filter: c => c is not TextContent);
+            responseText.Text += update.Text;
+            chatOptions.ConversationId = update.ConversationId;
+            ChatMessageItem.NotifyChanged(currentResponseMessage);
+        }
+
+        messages.Add(currentResponseMessage!);
+        statefulMessageCount = messages.Count;
+        currentResponseMessage = null;
+        chatSuggestions?.Update(messages);
+        
+        currentConversation.Messages = messages.ToList();
+        await ConversationRepo.SaveConversationAsync(currentConversation);
+        await LoadSidebarAsync();
+    }
+
+    private void CancelAnyCurrentResponse()
+    {
+        if (currentResponseMessage is not null)
+        {
+            messages.Add(currentResponseMessage);
+        }
+        currentResponseCancellation?.Cancel();
+        currentResponseMessage = null;
+    }
+
+    [Description("Loads the documents needed for performing searches. Must be completed before a search can be executed, but only needs to be completed once.")]
+    private async Task LoadDocumentsAsync()
+    {
+        await InvokeAsync(StateHasChanged);
+        await Search.LoadDocumentsAsync();
+    }
+
+    [Description("Searches for information using a phrase or keyword. Relies on documents already being loaded.")]
+    private async Task<IEnumerable<string>> SearchAsync(
+        [Description("The phrase to search for.")] string searchPhrase,
+        [Description("If possible, specify the filename to search that file only. If not provided or empty, the search includes all files.")] string? filenameFilter = null)
+    {
+        await InvokeAsync(StateHasChanged);
+        var results = await Search.SearchAsync(searchPhrase, filenameFilter, maxResults: 5);
+        return results.Select(result =>
+            $"<result filename=\"{result.DocumentId}\">{result.Text}</result>");
+    }
+
+    public void Dispose()
+        => currentResponseCancellation?.Cancel();
+}
