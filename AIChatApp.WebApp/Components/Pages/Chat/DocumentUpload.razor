@@ -9,7 +9,7 @@
 @inject VectorStore VectorStore
 
 <div class="document-upload">
-    <div class="upload-controls" style="position: relative; width: 100%;">
+    <div class="upload-controls" style="position: relative; width: 100%;white-space:nowrap;">
         <InputFile OnChange="HandleFileSelected" multiple accept=".txt,.pdf,.md,.docx" title="Drag and drop or click to upload" class="file-input"
                    @ondragenter="() => isDragHover = true" 
                    @ondragleave="() => isDragHover = false" />
@@ -35,9 +35,8 @@
 
     @if (existingFiles.Any())
     {
-        <div class="file-list" style="margin-top: 0.5rem; font-size: 0.85rem;">
-            <strong style="color:var(--text-secondary)">Your Documents:</strong>
-            <ul style="list-style: none; padding: 0; margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem;">
+        <div class="file-list" style="font-size: 0.85rem;width: 100%">
+            <ul style="list-style: none; padding: 0;display: flex; flex-wrap: wrap; gap: 0.5rem;justify-content: flex-start;">
                 @foreach (var file in existingFiles)
                 {
                     <li style="display:flex; align-items:center; gap: 0.25rem; background: var(--bg-accent, #1e293b); padding: 0.25rem 0.5rem; border-radius: 0.5rem; border: 1px solid var(--glass-border)">
@@ -109,12 +108,14 @@
                 }
             }
 
-            uploadProgress = 100;
+            uploadProgress = 95;
+            uploadMessage = "Optimizing data and indexing vectors... Please wait!";
             StateHasChanged();
             
             if (userDir != null)
                 await DataIngestor.IngestDataAsync(userDir, "*.*", UserSession.SessionId);
             
+            uploadProgress = 100;
             LoadExistingFiles();
             uploadMessage = "Ready! You can now ask questions about your documents.";
         }

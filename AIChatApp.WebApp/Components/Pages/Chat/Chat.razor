@@ -5,17 +5,27 @@
 @inject SemanticSearch Search
 @inject UserSessionContext UserSession
 @inject ConversationRepository ConversationRepo
+@inject IJSRuntime JS
 @implements IDisposable
 
-<PageTitle>AI ChatApp</PageTitle>
+<PageTitle>Proxima</PageTitle>
 
-<div class="app-layout">
+<div class="app-layout" style="display:flex;">
     @if (isSidebarOpen)
     {
         <div class="sidebar-backdrop" @onclick="ToggleSidebar"></div>
     }
 
     <div class="sidebar @(isSidebarOpen ? "open" : "closed")">
+        <div class="brand-logo">
+            <span class="proxima-text">Proxima</span>
+            <button class="mobile-close-btn" @onclick="ToggleSidebar" title="Close Sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        
         <button type="button" class="new-chat-btn" @onclick="StartNewChat">
             <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -55,7 +65,7 @@
         @if (messages.Count <= 1)
         {
             <div class="empty-state">
-                <h2>Welcome to AI ChatApp</h2>
+                <h2>Welcome to Proxima</h2>
                 <p>You need to upload a document to start chatting.</p>
                 <div class="empty-upload-wrapper">
                     <DocumentUpload />
@@ -64,7 +74,7 @@
         }
         else
         {
-            <div class="message-area scrollable">
+            <div class="message-area scrollable" @ref="messageAreaRef">
                 <ChatMessageList Messages="@messages" InProgressMessage="@currentResponseMessage" />
             </div>
         }
@@ -80,7 +90,7 @@
 
 @code {
     private const string SystemPrompt = @"
-        You are an advanced AI assistant powered by a retrieval-augmented generation (RAG) system.
+        Your name is Proxima. You are an advanced AI assistant powered by a retrieval-augmented generation (RAG) system.
         Your primary role is to answer user questions comprehensively using ONLY the information you retrieve from documents.
         If the information is not present in the retrieved documents, state clearly that you do not know. Do not hallucinate external facts.
 
@@ -99,7 +109,7 @@
         Format your response beautifully using Markdown with clear headers, lists, and bold text for emphasis.
         ";
 
-    private bool isSidebarOpen = true;
+    private bool isSidebarOpen = false;
     private ConversationRecord currentConversation = new();
     private List<ConversationRecord> pastConversations = new();
 
@@ -110,6 +120,8 @@
     private ChatMessage? currentResponseMessage;
     private ChatInput? chatInput;
     private ChatSuggestions? chatSuggestions;
+
+    private ElementReference messageAreaRef;
 
     protected override async Task OnInitializedAsync()
     {
@@ -130,6 +142,21 @@
         ];
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try {
+                var isDesktop = await JS.InvokeAsync<bool>("eval", "window.innerWidth > 768");
+                if (isDesktop)
+                {
+                    isSidebarOpen = true;
+                    StateHasChanged();
+                }
+            } catch { }
+        }
+    }
+
     private async Task LoadSidebarAsync()
     {
         pastConversations = await ConversationRepo.GetConversationsBySessionIdAsync(UserSession.SessionId);
@@ -140,7 +167,7 @@
         isSidebarOpen = !isSidebarOpen;
     }
 
-    private void LoadConversation(ConversationRecord record)
+    private async Task LoadConversation(ConversationRecord record)
     {
         CancelAnyCurrentResponse();
         currentConversation = record;
@@ -150,11 +177,16 @@
         chatOptions.ConversationId = null; // resets ephemeral context
         chatSuggestions?.Clear();
         
-        if (Env.IsDevelopment() == false || true) 
-        {
-            // Close sidebar after selecting on mobile/flyout
-            isSidebarOpen = false;
-        }
+        ScrollToBottom();
+        
+        try {
+            var isMobile = await JS.InvokeAsync<bool>("eval", "window.innerWidth <= 768");
+            if (isMobile)
+            {
+                isSidebarOpen = false;
+                StateHasChanged();
+            }
+        } catch { }
     }
 
     private void StartNewChat()
@@ -231,6 +263,14 @@
         currentConversation.Messages = messages.ToList();
         await ConversationRepo.SaveConversationAsync(currentConversation);
         await LoadSidebarAsync();
+        ScrollToBottom();
+    }
+
+    private void ScrollToBottom()
+    {
+        try {
+            _ = JS.InvokeVoidAsync("eval", "if (arguments[0]) { arguments[0].scrollTop = arguments[0].scrollHeight; }", messageAreaRef);
+        } catch { } // Ignore disconnected elements
     }
 
     private void CancelAnyCurrentResponse()

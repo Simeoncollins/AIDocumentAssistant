@@ -6,25 +6,26 @@
     padding-right: 0.75rem;
     margin-top: 1rem;
     margin-right: 1rem;
-    border-bottom: 2px solid #a770de;
     gap: 0.5rem;
     border-radius: 0.25rem;
-    font-size: 0.875rem;
     line-height: 1.25rem;
-    background-color: #ffffff;
+    background-color: var(--bg-accent);
+    color: var(--text-primary);
+    border: 1px solid var(--glass-border);
+    font-size: 13px;
 }
 
     .citation[href]:hover {
-        outline: 1px solid #865cb1;
+        outline: 1px solid var(--brand);
     }
 
     .citation svg {
-        width: 1.5rem;
-        height: 1.5rem;
+        width: 1.2rem;
+        height: 2.5rem;
     }
 
     .citation:active {
-        background-color: rgba(0,0,0,0.05);
+        background-color: var(--brand, #3b82f6);
     }
 
 .citation-content {

@@ -2,7 +2,7 @@
 
 @if (suggestions is not null)
 {
-    <div class="page-width suggestions">
+    <div class="suggestions">
         @foreach (var suggestion in suggestions)
         {
             <button class="btn-subtle" @onclick="@(() => AddSuggestionAsync(suggestion))">

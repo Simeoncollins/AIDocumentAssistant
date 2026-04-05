@@ -34,7 +34,7 @@
     flex-shrink: 0;
     overflow-y: auto;
     position: absolute;
-    height: 100%;
+    height: 100vh;
     z-index: 100;
     top: 0;
     left: 0;
@@ -231,4 +231,70 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+}
+
+/* Proxima Branding */
+::deep .brand-logo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+::deep .mobile-close-btn {
+    display: flex;
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0.5rem;
+    transition: color 0.2s;
+}
+
+::deep .mobile-close-btn:hover {
+    color: #fff;
+}
+
+::deep .mobile-close-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+::deep .proxima-text {
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: -0.05em;
+    background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-transform: lowercase;
+}
+
+/* Responsive Sidebar Rules */
+
+@media (max-width: 768px) {
+    ::deep .sidebar {
+        width: 85vw;
+        max-width: 360px;
+    }
+}
+
+@media (min-width: 769px) {
+    ::deep .sidebar {
+        position: relative; /* Push instead of flyout */
+        transform: none; 
+        width: 260px;
+        transition: margin-left 0.3s ease;
+        margin-left: 0;
+    }
+    ::deep .sidebar.closed {
+        margin-left: -260px;
+        transform: none;
+    }
+    ::deep .sidebar-backdrop {
+        display: none !important;
+    }
+    ::deep .mobile-close-btn {
+        display: none !important;
+    }
 }
