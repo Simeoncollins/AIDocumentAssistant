@@ -11,15 +11,12 @@
 <PageTitle>Proxima</PageTitle>
 
 <div class="app-layout" style="display:flex;">
-    @if (isSidebarOpen)
-    {
-        <div class="sidebar-backdrop" @onclick="ToggleSidebar"></div>
-    }
+    <div id="sidebar-backdrop" class="sidebar-backdrop" onclick="document.getElementById('sidebar-menu').classList.toggle('toggled'); document.getElementById('sidebar-backdrop').classList.toggle('toggled');"></div>
 
-    <div class="sidebar @(isSidebarOpen ? "open" : "closed")">
+    <div id="sidebar-menu" class="sidebar">
         <div class="brand-logo">
             <span class="proxima-text">Proxima</span>
-            <button class="mobile-close-btn" @onclick="ToggleSidebar" title="Close Sidebar">
+            <button type="button" class="mobile-close-btn" onclick="document.getElementById('sidebar-menu').classList.remove('toggled'); document.getElementById('sidebar-backdrop').classList.remove('toggled');" title="Close Sidebar">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -54,7 +51,7 @@
     
     <div class="main-chat">
         <div class="top-bar">
-            <button class="sidebar-toggle" @onclick="ToggleSidebar">
+            <button type="button" class="sidebar-toggle" onclick="document.getElementById('sidebar-menu').classList.toggle('toggled'); document.getElementById('sidebar-backdrop').classList.toggle('toggled');">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
@@ -92,7 +89,7 @@
     private const string SystemPrompt = @"
         Your name is Proxima. You are an advanced AI assistant powered by a retrieval-augmented generation (RAG) system.
         Your primary role is to answer user questions comprehensively using ONLY the information you retrieve from documents.
-        If the information is not present in the retrieved documents, state clearly that you do not know. Do not hallucinate external facts.
+        If no documents have been uploaded, or if the relevant information is not present in the retrieved documents, you MUST explicitly state that you do not have enough information and politely instruct the user to upload a document to their knowledge base. Do not hallucinate external facts!
 
         Use the LoadDocuments tool to prepare for searches before answering any questions.
 
@@ -109,7 +106,6 @@
         Format your response beautifully using Markdown with clear headers, lists, and bold text for emphasis.
         ";
 
-    private bool isSidebarOpen = false;
     private ConversationRecord currentConversation = new();
     private List<ConversationRecord> pastConversations = new();
 
@@ -144,27 +140,11 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
-        {
-            try {
-                var isDesktop = await JS.InvokeAsync<bool>("eval", "window.innerWidth > 768");
-                if (isDesktop)
-                {
-                    isSidebarOpen = true;
-                    StateHasChanged();
-                }
-            } catch { }
-        }
     }
 
     private async Task LoadSidebarAsync()
     {
         pastConversations = await ConversationRepo.GetConversationsBySessionIdAsync(UserSession.SessionId);
-    }
-
-    private void ToggleSidebar()
-    {
-        isSidebarOpen = !isSidebarOpen;
     }
 
     private async Task LoadConversation(ConversationRecord record)
@@ -180,12 +160,7 @@
         ScrollToBottom();
         
         try {
-            var isMobile = await JS.InvokeAsync<bool>("eval", "window.innerWidth <= 768");
-            if (isMobile)
-            {
-                isSidebarOpen = false;
-                StateHasChanged();
-            }
+            _ = JS.InvokeVoidAsync("eval", "if(window.innerWidth <= 768) { var s=document.getElementById('sidebar-menu'); var b=document.getElementById('sidebar-backdrop'); if(s)s.classList.remove('toggled'); if(b)b.classList.remove('toggled'); }");
         } catch { }
     }
 

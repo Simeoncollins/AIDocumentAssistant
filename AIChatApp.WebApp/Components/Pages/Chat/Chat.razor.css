@@ -276,6 +276,16 @@
     ::deep .sidebar {
         width: 85vw;
         max-width: 360px;
+        transform: translateX(-100%);
+    }
+    ::deep .sidebar.toggled {
+        transform: translateX(0);
+    }
+    ::deep .sidebar-backdrop {
+        display: none;
+    }
+    ::deep .sidebar-backdrop.toggled {
+        display: block;
     }
 }
 
@@ -287,7 +297,7 @@
         transition: margin-left 0.3s ease;
         margin-left: 0;
     }
-    ::deep .sidebar.closed {
+    ::deep .sidebar.toggled {
         margin-left: -260px;
         transform: none;
     }
